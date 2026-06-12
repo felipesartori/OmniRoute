@@ -91,9 +91,7 @@ import AddApiKeyModal from "./components/modals/AddApiKeyModal";
 import EditConnectionModal from "./components/modals/EditConnectionModal";
 import WebSessionCredentialGuide from "./components/WebSessionCredentialGuide";
 // Phase 1d extractions — Issue #3501
-import ConnectionRow, {
-  type ConnectionRowConnection,
-} from "./components/ConnectionRow";
+import ConnectionRow, { type ConnectionRowConnection } from "./components/ConnectionRow";
 import ModelCompatPopover from "./components/ModelCompatPopover";
 import SiliconFlowEndpointModal from "./components/SiliconFlowEndpointModal";
 import { CC_COMPATIBLE_DEFAULT_CHAT_PATH } from "./providerDetailConstants";
@@ -108,6 +106,8 @@ import {
   // normalizeAndValidateHttpBaseUrl, formatTimeAgo
   // — all moved to extracted modals (AddApiKeyModal, EditConnectionModal, WebSessionCredentialGuide)
   providerText,
+  testAllResultsText,
+  evaluateTestAllEntry,
   providerCountText,
   readBooleanToggle,
   formatProviderModelsErrorResponse,
@@ -653,14 +653,18 @@ export default function ProviderDetailPageClient() {
         notify.error(data.error || "Model test failed");
         setModelTestStatus((prev) => ({ ...prev, [modelId]: "error" }));
         if (handleToggleModelHidden) {
-          await handleToggleModelHidden(providerStorageAlias, modelId, true);
+          // Hidden flag keyed by providerId — same as the manual eye toggle and the read
+          // (fetchProviderModelMeta). providerStorageAlias wrote it under the alias while the
+          // read looked under the canonical id, so auto-hide never reflected.
+          await handleToggleModelHidden(providerId, modelId, true);
         }
       }
     } catch (err) {
       notify.error("Network error testing model");
       setModelTestStatus((prev) => ({ ...prev, [modelId]: "error" }));
       if (handleToggleModelHidden) {
-        await handleToggleModelHidden(providerStorageAlias, modelId, true);
+        // Hidden flag keyed by providerId (see the test-failure branch above).
+        await handleToggleModelHidden(providerId, modelId, true);
       }
     } finally {
       setTestingModelId(null);
@@ -709,24 +713,31 @@ export default function ProviderDetailPageClient() {
             }).then((r) => r.json());
 
             const entry = result.results?.[fullModel];
-            if (entry?.status === "ok") {
+            const outcome = evaluateTestAllEntry(entry, autoHideFailed);
+            // Paint the per-model icon green/red, same as the single-model ▶ test.
+            setModelTestStatus((prev) => ({ ...prev, [modelId]: outcome.status }));
+            if (outcome.status === "ok") {
               ok++;
             } else {
               error++;
-              if (autoHideFailed && !entry?.rateLimited && !entry?.isTimeout) {
-                await handleToggleModelHidden(providerStorageAlias, modelId, true);
+              if (outcome.shouldHide) {
+                // Hidden flag keyed by providerId — same as the manual eye toggle and the read
+                // (fetchProviderModelMeta). providerStorageAlias wrote it under the alias while the
+                // read looked under the canonical id, so auto-hide never reflected.
+                await handleToggleModelHidden(providerId, modelId, true);
                 hiddenCount++;
               }
             }
           } catch (e) {
             error++;
+            setModelTestStatus((prev) => ({ ...prev, [modelId]: "error" }));
           }
           setTestProgress((prev) => (prev ? { done: prev.done + 1, total: prev.total } : null));
         })
       );
     }
 
-    notify.info(providerText(t, "testAllResults", "{ok} ok, {error} error", { ok, error }));
+    notify.info(testAllResultsText(t, ok, ok + error));
     if (hiddenCount > 0) {
       notify.info(providerText(t, "testAllFailedHidden", "{count} hidden", { count: hiddenCount }));
     }
@@ -1794,10 +1805,7 @@ export default function ProviderDetailPageClient() {
   };
 
   // Phase 1e: compat-state derivations moved to useModelCompatState hook.
-  const compat = useModelCompatState(
-    modelMeta.customModels,
-    modelMeta.modelCompatOverrides
-  );
+  const compat = useModelCompatState(modelMeta.customModels, modelMeta.modelCompatOverrides);
   const { customMap, overrideMap } = compat;
   const effectiveModelNormalize = compat.effectiveModelNormalize;
   const effectiveModelPreserveDeveloper = compat.effectiveModelPreserveDeveloper;
@@ -2099,6 +2107,9 @@ export default function ProviderDetailPageClient() {
             togglingModelId={togglingModelId}
             onTestModel={onTestModel}
             modelTestStatus={modelTestStatus}
+            onModelTestStatusChange={(modelId, status) =>
+              setModelTestStatus((prev) => ({ ...prev, [modelId]: status }))
+            }
             testingModelId={testingModelId}
             providerId={providerId}
             connectionId={selectedConnection?.id ?? ""}
