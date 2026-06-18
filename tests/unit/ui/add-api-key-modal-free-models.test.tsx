@@ -9,7 +9,7 @@ vi.mock("next-intl", () => ({
 }));
 
 const { default: AddApiKeyModal } = await import(
-  "../../src/app/(dashboard)/dashboard/providers/[id]/components/modals/AddApiKeyModal"
+  "../../../src/app/(dashboard)/dashboard/providers/[id]/components/modals/AddApiKeyModal"
 );
 
 const FREE_TOGGLE = 'button[role="switch"][aria-label="importFreeModelsOnlyLabel"]';

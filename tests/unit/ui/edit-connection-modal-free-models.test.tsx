@@ -12,7 +12,7 @@ vi.mock("next-intl", () => ({
 }));
 
 const { default: EditConnectionModal } = await import(
-  "../../src/app/(dashboard)/dashboard/providers/[id]/components/modals/EditConnectionModal"
+  "../../../src/app/(dashboard)/dashboard/providers/[id]/components/modals/EditConnectionModal"
 );
 
 const FREE_TOGGLE = 'button[role="switch"][aria-label="importFreeModelsOnlyLabel"]';

@@ -4,7 +4,7 @@ import { createRoot } from "react-dom/client";
 import { describe, it, expect, vi, afterEach } from "vitest";
 
 const { ModelVisibilityToolbar } = await import(
-  "../../src/app/(dashboard)/dashboard/providers/[id]/components/ModelRow"
+  "../../../src/app/(dashboard)/dashboard/providers/[id]/components/ModelRow"
 );
 
 // providerText() falls back to the English string when t.has(key) is false.
