@@ -1,5 +1,6 @@
 import { PROVIDER_MODELS, PROVIDER_ID_TO_ALIAS } from "@/shared/constants/models";
 import { AI_PROVIDERS, NOAUTH_PROVIDERS } from "@/shared/constants/providers";
+import { isVisionModelId } from "@/shared/constants/visionModels";
 import {
   getProviderConnections,
   getCombos,
@@ -8,6 +9,7 @@ import {
   getProviderNodes,
   getModelIsHidden,
 } from "@/lib/localDb";
+import { appendNoThinkingVariants } from "@omniroute/open-sse/utils/noThinkingAlias";
 import { getAllEmbeddingModels } from "@omniroute/open-sse/config/embeddingRegistry";
 import { getAllImageModels } from "@omniroute/open-sse/config/imageRegistry";
 import { getAllRerankModels } from "@omniroute/open-sse/config/rerankRegistry";
@@ -18,6 +20,7 @@ import { getAllMusicModels } from "@omniroute/open-sse/config/musicRegistry";
 import { REGISTRY } from "@omniroute/open-sse/config/providerRegistry";
 import { CODEX_NATIVE_UNPREFIXED_MODELS } from "@omniroute/open-sse/services/model";
 import { resolveNestedComboTargets } from "@omniroute/open-sse/services/combo";
+import { AUTO_TEMPLATE_VARIANTS } from "@omniroute/open-sse/services/autoCombo/builtinCatalog";
 import { getAllSyncedAvailableModels, type SyncedAvailableModel } from "@/lib/db/models";
 import { getCompatibleFallbackModels } from "@/lib/providers/managedAvailableModels";
 import { getOpenRouterCatalog } from "@/lib/catalog/openrouterCatalog";
@@ -123,37 +126,10 @@ function minKnownNumber(values: Array<number | undefined>): number | undefined {
   return Math.min(...knownValues);
 }
 
-const VISION_MODEL_KEYWORDS = [
-  "gpt-4o",
-  "gpt-4.1",
-  "gpt-4-vision",
-  "gpt-4-turbo",
-  "claude-3",
-  "claude-3.5",
-  "claude-3-5",
-  "claude-4",
-  "claude-opus",
-  "claude-sonnet",
-  "claude-haiku",
-  "gemini",
-  "gemma",
-  "llava",
-  "bakllava",
-  "pixtral",
-  "mistral-pixtral",
-  "qwen-vl",
-  "qvq",
-  "glm-4.6v",
-  "glm-4.5v",
-  "vision",
-  "multimodal",
-  "kimi",
-];
-function isVisionModelId(modelId: string): boolean {
-  const normalized = String(modelId || "").toLowerCase();
-  if (!normalized) return false;
-  return VISION_MODEL_KEYWORDS.some((keyword) => normalized.includes(keyword));
-}
+// Vision detection is centralized in `@/shared/constants/visionModels` (#4072) so
+// this listing path, the routing fallback, and lite compression share one verdict.
+// Re-exported for callers/tests that imported it from here.
+export { isVisionModelId };
 
 function getVisionCapabilityFields(modelId: string) {
   if (!isVisionModelId(modelId)) return null;
@@ -677,11 +653,32 @@ export async function getUnifiedModelsResponse(
     // Collect models from active providers (or all if none active)
     const models = [];
     const timestamp = Math.floor(Date.now() / 1000);
+    const listedIds = new Set<string>();
+
+    // #4164: advertise the built-in zero-setup `auto/*` combos at the very top.
+    // They resolve on demand (createBuiltinAutoCombo) so they have no fixed
+    // targets/metadata to derive — emit a minimal combo-owned entry. The dashboard
+    // already shows these; clients that build their picker from /v1/models (e.g.
+    // Hermes) need them here too.
+    for (const autoId of Object.keys(AUTO_TEMPLATE_VARIANTS)) {
+      if (listedIds.has(autoId)) continue;
+      listedIds.add(autoId);
+      models.push({
+        id: autoId,
+        object: "model",
+        created: timestamp,
+        owned_by: "combo",
+        permission: [],
+        root: autoId,
+        parent: null,
+      });
+    }
 
     // Add combos first (they appear at the top) — only active ones
     for (const combo of combos) {
       if (combo.isActive === false || combo.isHidden === true) continue;
       if (typeof combo.name !== "string" || combo.name.length === 0) continue;
+      if (listedIds.has(combo.name)) continue; // #4164: don't shadow a built-in auto/* id
 
       // Skip combos whose any underlying target model is hidden
       const comboTargets = resolveNestedComboTargets(
@@ -699,6 +696,7 @@ export async function getUnifiedModelsResponse(
 
       const comboMetadata = buildComboCatalogMetadata(combo, combos);
 
+      listedIds.add(combo.name);
       models.push({
         id: combo.name,
         object: "model",
@@ -1353,6 +1351,10 @@ export async function getUnifiedModelsResponse(
         finalModels = filtered;
       }
     }
+
+    // Advertise no-thinking gateway variants (Fase 8.1). Derived from the already
+    // key-filtered list, so a variant only appears when its real model is permitted.
+    finalModels = appendNoThinkingVariants(finalModels);
 
     const getDefaultContextFallback = (model: any): number | undefined => {
       if (typeof model.context_length === "number") return undefined;
